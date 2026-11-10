@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { createEngineFs, createFetchTransport } from '../bridge/engine-fs.mjs';
 import { build } from 'esbuild';
 
@@ -230,6 +231,194 @@ test('runtime writes have private permissions and bounded reads',async t=>{
   assert.equal((await fs.stat(path.dirname(file))).mode&0o777,0o700);
   await fs.writeFile(path.join(root,'章节内容','large.md'),'x'.repeat(1024*1024+1));
   await assert.rejects(bridge.readText(path.join(root,'章节内容','large.md')));
+});
+
+test('dev controller edits material, adopts candidate by move, and records runtime snapshots',async t=>{
+  const {engine,root,runtimeDir}=await engineFixture(t);
+  const material=path.join(root,'小说资料','notes.md');await fs.writeFile(material,'old setting');
+  const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+  let calls=0;
+  const tool=(index,name,args)=>({index,id:'dev'+index,type:'function',function:{name,arguments:JSON.stringify(args)}});
+  globalThis.fetch=async()=>++calls===1?sseResponse([{tool_calls:[
+    tool(0,'file_write',{operation:'replace',path:'小说资料/notes.md',old_text:'old setting',new_text:'updated setting'}),
+    tool(1,'file_manage',{operation:'rename',path:'待确认/existing.md',new_path:'待确认/已处理/existing.md'}),
+    tool(2,'file_write',{operation:'replace',path:'章节内容/第1章.md',old_text:'fixture',new_text:'adopted prose'})
+  ]}]):sseResponse([{content:'finished'}]);
+  const {taskId}=await engine.start({requestId:'dev-tools',projectId:'p',root,text:'synthetic authorized adoption',mode:'dev'});
+  const done=await until(engine,taskId,s=>s.state==='completed'||s.state==='failed');
+  assert.equal(done.state,'completed');
+  assert.equal(await fs.readFile(material,'utf8'),'updated setting');
+  assert.equal(await fs.readFile(path.join(root,'章节内容/第1章.md'),'utf8'),'adopted prose');
+  assert.equal(await fs.readFile(path.join(root,'待确认/已处理/existing.md'),'utf8'),'original');
+  await assert.rejects(fs.stat(path.join(root,'待确认/existing.md')));
+  assert.ok((await fs.readdir(path.join(runtimeDir,'snapshots'))).some(n=>n.endsWith('.json')));
+  const backupBytes=await Promise.all((await fs.readdir(path.join(runtimeDir,'backups'))).map(n=>fs.readFile(path.join(runtimeDir,'backups',n),'utf8')));
+  assert.ok(backupBytes.includes('old setting'));assert.ok(backupBytes.includes('fixture'));
+});
+
+test('dev overwrite refuses external changes during backup and preserves the newer bytes',async t=>{
+  const {root,runtimeDir,bridge}=await fixture(t);
+  bridge.beginTask({root,mode:'dev'});
+  const file=path.join(root,'待确认','existing.md');
+  const open=fs.open;
+  t.mock.method(fs,'open',async function(p,...args){
+    if(typeof p==='string'&&p.startsWith(path.join(runtimeDir,'backups')+path.sep))await fs.writeFile(file,'external update');
+    return open.call(fs,p,...args);
+  });
+  await assert.rejects(bridge.writeText(file,'stale replacement'));
+  assert.equal(await fs.readFile(file,'utf8'),'external update');
+  assert.equal((await fs.readdir(path.dirname(file))).some(n=>n.startsWith('.mobile-')),false);
+});
+
+test('dev support exceptions allow files and structural directory with exact types only',async t=>{
+  const {root,bridge}=await fixture(t);bridge.beginTask({root,mode:'dev'});
+  await assert.rejects(bridge.writeText(path.join(root,'writerd_oplog'),'not a directory'));
+  await assert.rejects(bridge.mkdir(path.join(root,'.openwrite_manifest.json')));
+  await fs.writeFile(path.join(root,'writerd_oplog'),'not a directory');
+  await assert.rejects(bridge.readText(path.join(root,'writerd_oplog')));
+});
+
+test('dev edits existing material with private raw-byte backup and atomic replacement',async t=>{
+  const {root,runtimeDir,bridge}=await fixture(t);
+  const file=path.join(root,'小说资料','setting.md');
+  const original=Buffer.from([0xff,0xfe,0x2d,0x4e]);
+  await fs.writeFile(file,original);
+  const before=await fs.stat(file);
+  bridge.beginTask({root,mode:'dev'});
+  await bridge.writeText(file,'new material');
+  assert.equal(await fs.readFile(file,'utf8'),'new material');
+  assert.notEqual((await fs.stat(file)).ino,before.ino);
+  const backups=await fs.readdir(path.join(runtimeDir,'backups'));
+  assert.equal(backups.length,1);
+  const backup=path.join(runtimeDir,'backups',backups[0]);
+  assert.deepEqual(await fs.readFile(backup),original);
+  assert.equal((await fs.stat(backup)).mode&0o777,0o600);
+  assert.equal((await fs.stat(path.dirname(backup))).mode&0o777,0o700);
+  await bridge.appendText(file,' appended');
+  assert.equal(await bridge.readText(file),'new material appended');
+});
+
+test('dev archives candidates and completed outlines without overwriting conflicts',async t=>{
+  const {root,bridge}=await fixture(t);
+  bridge.beginTask({root,mode:'dev'});
+  const source=path.join(root,'待确认','existing.md');
+  const archive=path.join(root,'待确认','已处理','existing.md');
+  await bridge.mkdir(path.dirname(archive));
+  await bridge.rename(source,archive);
+  assert.equal(await bridge.exists(source),false);
+  assert.equal(await bridge.readText(archive),'original');
+  const outline=path.join(root,'小说资料','细纲','已完成','outline.md');
+  await bridge.copy(archive,outline);
+  assert.equal(await bridge.readText(outline),'original');
+  await assert.rejects(bridge.copy(archive,outline));
+  await bridge.writeText(source,'candidate');
+  await assert.rejects(bridge.rename(source,archive));
+  assert.equal(await bridge.readText(source),'candidate');
+  await assert.rejects(bridge.remove(archive));
+});
+
+test('dev only reads active root even if another project is allowed and limits support exceptions',async t=>{
+  const {root,dir,runtimeDir,skillsDir}=await fixture(t);
+  const other=path.join(dir,'other');
+  await fs.mkdir(path.join(other,'小说资料'),{recursive:true});
+  await fs.writeFile(path.join(other,'小说资料','secret.md'),'other work');
+  const bridge=await createEngineFs({allowedProjects:[root,other],runtimeDir,skillsDir});
+  bridge.beginTask({root,mode:'dev'});
+  for(const action of [()=>bridge.list(other),()=>bridge.readText(path.join(other,'小说资料','secret.md')),()=>bridge.writeText(path.join(other,'小说资料','secret.md'),'bad'),()=>bridge.copy(path.join(root,'待确认','existing.md'),path.join(other,'小说资料','new.md'))])await assert.rejects(action());
+  await bridge.writeText(path.join(root,'.openwrite_manifest.json'),'{}');
+  await bridge.mkdir(path.join(root,'writerd_oplog'));
+  await bridge.appendText(path.join(root,'writerd_oplog','log.jsonl'),'{}\n');
+  assert.equal(await bridge.readText(path.join(root,'.openwrite_manifest.json')),'{}');
+  for(const rel of ['.secret.md','writerd_oplog/secret.md','小说资料/.openwrite_manifest.json','小说资料/data.json'])await assert.rejects(bridge.writeText(path.join(root,rel),'bad'));
+  await fs.link(path.join(root,'待确认','existing.md'),path.join(root,'小说资料','hard.md'));
+  await assert.rejects(bridge.readText(path.join(root,'小说资料','hard.md')));
+  await assert.rejects(bridge.writeText(path.join(root,'小说资料','hard.md'),'bad'));
+  bridge.endTask();bridge.beginTask({root,mode:'readonly'});
+  await assert.rejects(bridge.writeText(path.join(root,'.openwrite_manifest.json'),'bad'));
+  await assert.rejects(bridge.mkdir(path.join(root,'小说资料','nested')));
+});
+
+test('engine accepts dev prompt and exposes busy across a mocked controller run',async t=>{
+  const {engine,root}=await engineFixture(t);
+  const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+  let entered,release;
+  const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+  globalThis.fetch=async(_url,request)=>{
+    const body=JSON.parse(request.body);
+    assert.ok(body.messages.some(m=>typeof m.content==='string'&&m.content.includes('dev fixture instruction')));
+    entered();await gate;return sseResponse([{content:'dev complete'}]);
+  };
+  assert.equal(engine.busy(),false);
+  const pending=engine.start({requestId:'dev-contract',projectId:'p',root,mode:'dev',text:'synthetic',prompt:'dev fixture instruction'});
+  assert.equal(engine.busy(),true);
+  const {taskId}=await pending;await ready;
+  assert.equal(engine.busy(),true);release();
+  const done=await until(engine,taskId,s=>s.state==='completed'||s.state==='failed');
+  assert.equal(done.state,'completed');assert.equal(engine.busy(),false);
+});
+
+async function fixtureVersion(file) {
+  const bytes=await fs.readFile(file),st=await fs.stat(file);
+  return createHash('sha256').update(bytes).digest('hex')+':'+st.size+':'+st.mtimeMs;
+}
+
+test('expected source version rejects external edits before model reads and archive',async t=>{
+  const {root,bridge}=await fixture(t),file=path.join(root,'待确认','existing.md');
+  const version=await fixtureVersion(file);
+  bridge.beginTask({root,mode:'dev',expectedFiles:[{path:file,version}]});
+  assert.equal(await bridge.readText(file),'original');
+  await fs.writeFile(file,'new external source');
+  for(const action of [()=>bridge.readText(file),()=>bridge.writeText(file,'bad'),()=>bridge.rename(file,path.join(root,'待确认','已处理','existing.md')),()=>bridge.copy(file,path.join(root,'待确认','copy.md'))])await assert.rejects(action(),/VERSION_CONFLICT/);
+  assert.equal(await fs.readFile(file,'utf8'),'new external source');
+});
+
+test('expected raw hash rejects same-size changes with restored mtime',async t=>{
+  const {root,bridge}=await fixture(t),file=path.join(root,'待确认','existing.md');
+  await fs.utimes(file,1700000000,1700000000);const version=await fixtureVersion(file);
+  bridge.beginTask({root,mode:'dev',expectedFiles:[{path:file,version}]});
+  await fs.writeFile(file,'modified');await fs.utimes(file,1700000000,1700000000);
+  await assert.rejects(bridge.readText(file),/VERSION_CONFLICT/);
+});
+
+test('expected missing file advances after own create and writing appends',async t=>{
+  const {root,bridge}=await fixture(t),file=path.join(root,'待确认','new.md');
+  bridge.beginTask({root,mode:'writing',expectedFiles:[{path:file,version:null}]});
+  await bridge.writeText(file,'first');await bridge.appendText(file,' second');assert.equal(await bridge.readText(file),'first second');bridge.endTask();
+  const other=path.join(root,'章节内容','new.md');bridge.beginTask({root,mode:'dev',expectedFiles:[{path:other,version:null}]});
+  await bridge.writeText(other,'first');await bridge.writeText(other,'second');assert.equal(await bridge.readText(other),'second');
+});
+
+test('expected absent target rejects later creation without overwriting',async t=>{
+  const {root,bridge}=await fixture(t),file=path.join(root,'章节内容','target.md');
+  bridge.beginTask({root,mode:'dev',expectedFiles:[{path:file,version:null}]});
+  assert.equal(await bridge.exists(file),false);
+  await fs.writeFile(file,'external chapter');
+  await assert.rejects(bridge.writeText(file,'candidate'),/VERSION_CONFLICT/);
+  await assert.rejects(bridge.readText(file),/VERSION_CONFLICT/);
+  assert.equal(await fs.readFile(file,'utf8'),'external chapter');
+});
+
+test('expected versions advance only through own writes copies and moves',async t=>{
+  const {root,bridge}=await fixture(t),source=path.join(root,'待确认','existing.md'),target=path.join(root,'章节内容','new.md'),copy=path.join(root,'小说资料','copy.md');
+  bridge.beginTask({root,mode:'dev',expectedFiles:[{path:source,version:await fixtureVersion(source)},{path:target,version:null},{path:copy,version:null}]});
+  await bridge.writeText(source,'adopted');await bridge.appendText(source,' version');assert.equal(await bridge.readText(source),'adopted version');
+  await bridge.copy(source,copy);assert.equal(await bridge.readText(copy),'adopted version');
+  await bridge.rename(source,target);assert.equal(await bridge.exists(source),false);assert.equal(await bridge.readText(target),'adopted version');
+  await bridge.writeText(target,'own second edit');assert.equal(await bridge.readText(target),'own second edit');
+  await fs.writeFile(source,'new source');await assert.rejects(bridge.readText(source),/VERSION_CONFLICT/);
+});
+
+test('expected paths accept at most three active-root category Markdown bindings',async t=>{
+  const {root,dir,bridge}=await fixture(t),file=path.join(root,'待确认','existing.md'),version=await fixtureVersion(file);
+  for(const expectedFiles of [[{path:path.join(dir,'outside.md'),version}],[{path:path.join(root,'.openwrite_manifest.json'),version}],[{path:file,version:'invalid'}],Array(4).fill({path:file,version}),[{path:file,version},{path:file,version}]])assert.throws(()=>bridge.beginTask({root,mode:'dev',expectedFiles}));
+  bridge.beginTask({root,mode:'readonly',expectedFiles:[{path:file,version}]});assert.equal(await bridge.readText(file),'original');await assert.rejects(bridge.writeText(file,'bad'));
+});
+
+test('engine forwards trusted expected files into controller accesses',async t=>{
+  const {root,engine}=await engineFixture(t),file=path.join(root,'待确认','existing.md'),version=await fixtureVersion(file);
+  const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});let calls=0;
+  globalThis.fetch=async()=>{if(++calls===1){await fs.writeFile(file,'external source');return sseResponse([{tool_calls:[{index:0,id:'bound-write',type:'function',function:{name:'file_write',arguments:JSON.stringify({operation:'write',path:'待确认/existing.md',content:'bad overwrite'})}}]}]);}return sseResponse([{content:'done'}]);};
+  const {taskId}=await engine.start({requestId:'bound-tools',projectId:'p',root,text:'fixture',mode:'dev',expectedFiles:[{path:file,version}]});await until(engine,taskId,s=>s.state==='completed'||s.state==='failed');assert.equal(await fs.readFile(file,'utf8'),'external source');
 });
 
 test('SSE transport preserves UTF8 chunks and trailing line and HTTP classification',async()=>{

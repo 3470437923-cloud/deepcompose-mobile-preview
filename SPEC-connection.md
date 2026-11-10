@@ -5,7 +5,7 @@
 
 ## 模块与顺序
 1. secure-channel：端点 AES-256-GCM 加密，HKDF 派生 topic/c2d/d2c；MQTT over WSS 应用消息中继，不进行端口转发。
-2. desktop-bridge：仅电脑本地读取配置与授权作品目录。项目与文件使用不透明ID。只读接口、独立手机会话与任务执行。
+2. desktop-bridge：仅电脑本地读取配置与授权作品目录。项目与文件使用不透明ID。版本化全文编辑、独立手机会话与任务执行。
 3. mobile-client：配对、真实作品/章节/会话、电脑任务状态，明确离线/超时/错误。未配对不展示虚构内容为真实内容。
 
 ## 安全边界
@@ -20,9 +20,17 @@ AES-GCM随机12字节nonce、版本与方向AAD。请求/响应均加密；请�
 - file.read {projectId,fileId} → {id,name,content,version,truncated}
 - sessions.list {projectId} → 会话标题、ID、来源、更新时间，最多50项
 - session.read {projectId,sessionId} → 仅user/assistant文本，工具/配置不外传
-- task.start {projectId,text,mode:readonly|writing} → {taskId}，按请求ID持久去重；最多1个生成任务，默认readonly；writing最多只写新候选，不允许覆盖正式稿与既有候选
+- task.start {projectId,text,mode:readonly|writing|dev} → {taskId}，按请求ID持久去重；最多1个生成任务，默认readonly；writing最多只写新候选，不允许覆盖正式稿与既有候选；dev授权本作品的正文、资料、候选编辑与归档，写前私有备份，根外与其他作品拒绝
 - task.get {taskId} → 持久化快照（消息、进度、待回答问题、完成/失败），支持断线后读取
 - task.answer {taskId,questionId,answers} / task.stop {taskId}
+
+## v0.3 编辑、采用与回流
+
+file.chunk 分片读取完整原文，每片≤16000 UTF16字符，单文件≤2MiB，后片必须匹配首片version。file.write.begin/chunk/commit 三阶段提交，sha/mtime/inode比对，原始字节先备份再原子替换；版本冲突保留手机草稿，不自动覆盖。file.create仅新建三类平面Markdown文件且不能覆盖。
+
+candidate.preview绑定源稿与正式目标版本、10min确认token；candidate.adopt复核后以独立dev任务执行与桌面相同五步，不把复制或任务启动当完成。file.reflow复用桌面facts/style提示，只有committed/postVersion关联的编辑备份能作为diff依据；无基线明确仅审稿，不伪造用户偏好。手工写入与AI启动在host串行，AI忙时拒绝手工提交。
+
+正文/候选/资料可复制与编辑，快捷查找、替换选区及全选，保存失败不清草稿。页面离开有未保存保护，长标题/哈希/正文/编辑器/底栏均固定宽度并换行，320/390/430实测无横向溢出。
 
 ## 电脑执行
 不修改当前有未提交更改的桌面仓库；通过构建适配器复用现有TS controller和工具校验，密钥从本机prefs读取，使用Node流式HTTP适配器。独立手机会话/用量/任务存在用户本地私有runtime目录。桌面既有会话仅只读，不冒充正在控制当前桌面窗口。模型任务执行前保存请求意图，重启不自动重试不确定任务。

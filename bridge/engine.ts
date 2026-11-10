@@ -10,7 +10,7 @@ const MAX_TEXT = 24000;
 const MAX_MESSAGES = 16000;
 const ACTIVE_STATES = new Set(['running', 'waiting']);
 type Options = { prefsPath:string; booksRoot:string; skillsDir:string; runtimeDir:string; allowedProjects:string[] };
-type Start = {requestId:string; projectId:string; root:string; text:string; mode?:'readonly'|'writing'};
+type Start = {requestId:string; projectId:string; root:string; text:string; mode?:'readonly'|'writing'|'dev'; prompt?:string; expectedFiles?:{path:string;version:string|null}[]};
 type Task = {id:string;projectId:string;state:string;text:string;messages:{role:string;text:string}[];toolStatus:string;error?:string;question?:{id:string;items:any[]};startedAt:string;updatedAt:string};
 
 // 配置只在本机读取，不通过 FsBridge 或远端任务提供任何配置读取能力。
@@ -113,7 +113,7 @@ export async function createEngine(options:Options) {
   async function execute(run:any,input:Start) {
     try {
       const result=await send({
-        dirs,prefs:{...prefs,systemPrompt:prefs.systemPrompt+'\n手机任务：只能读取已授权作品资料。写作模式仅允许新建待确认目录下的Markdown候选，后续只能追加本任务新建候选；禁止覆盖既有候选与正式正文。'},
+        dirs,prefs:{...prefs,systemPrompt:prefs.systemPrompt+(input.mode==='dev' ? '\n手机 dev 任务：已授权编辑当前作品的小说资料、章节内容和待确认 Markdown，包括采纳候选与整理细纲。遵守 novel-writer 的全部规则；改动用户原有正文前必须先通过 question 确认。只能处理当前作品，禁止访问或授权任何外部根目录。\n'+(input.prompt??'') : '\n手机任务：只能读取已授权作品资料。写作模式仅允许新建待确认目录下的Markdown候选，后续只能追加本任务新建候选；禁止覆盖既有候选与正式正文。')},
         session:null,projectRoot:input.root,userText:input.text,transport:run.transport,
         mode:input.mode??'readonly',signal:run.signal,allowedDirs:[],confirmExternal:async()=>false,
         onEvent(event:any) {
@@ -156,6 +156,7 @@ export async function createEngine(options:Options) {
     }
   }
   return {
+    busy():boolean {return starting || active!==null;},
     info(){return{model:safeText(cfg?.model??'',200),configured:!!cfg};},
     async start(input:Start) {
       if(typeof input?.requestId!=='string'||!input.requestId||input.requestId.length>200)throw new Error('请求ID无效');
@@ -165,7 +166,8 @@ export async function createEngine(options:Options) {
       if(!cfg)throw new Error('电脑尚未配置模型');
       if(typeof input.projectId!=='string'||!input.projectId||typeof input.root!=='string'||!projects.includes(path.resolve(input.root)))throw new Error('作品未授权');
       if(typeof input.text!=='string'||!input.text.trim()||input.text.length>8000)throw new Error('任务内容须为1至8000字');
-      if(input.mode!==undefined&&input.mode!=='readonly'&&input.mode!=='writing')throw new Error('任务模式无效');
+      if(input.mode!==undefined&&input.mode!=='readonly'&&input.mode!=='writing'&&input.mode!=='dev')throw new Error('任务模式无效');
+      if(input.prompt!==undefined && typeof input.prompt!=='string')throw new Error('任务提示无效');
       if(tasks.size>=2000)throw new Error('本机任务存储已满，请整理后再试');
       starting=true;
       const now=new Date().toISOString();
@@ -173,7 +175,7 @@ export async function createEngine(options:Options) {
       requests.set(input.requestId,task.id);requestOf.set(task.id,input.requestId);tasks.set(task.id,task);
       try {
         const intent=persist(task);pendingIntents.set(input.requestId,intent);await intent;
-        bridge.beginTask({root:input.root,mode:input.mode??'readonly'});
+        bridge.beginTask({root:input.root,mode:input.mode??'readonly',expectedFiles:input.expectedFiles});
         const run:any={task,signal:{aborted:false},transport:createFetchTransport(),resolveQuestion:null,flushTimer:null};
         active=run;
         run.deadline=setTimeout(()=>{cancel(run,'任务超过15分钟，已停止');void persist(task).catch(()=>{});},15*60*1000);

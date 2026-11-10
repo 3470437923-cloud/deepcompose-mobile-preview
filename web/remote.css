@@ -41,9 +41,31 @@ dialog.reader::backdrop{background:rgba(0,0,0,.32)}
 .reader article{padding-bottom:120px}
 .reader-bar{position:sticky;top:0;background:var(--bg);z-index:1}
 .reader-bar>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
-.reader-bottom{position:sticky;bottom:0;background:var(--paper);padding:16px 22px calc(16px + env(safe-area-inset-bottom));display:block}
+.reader-bottom{position:sticky;bottom:0;left:auto;right:auto;transform:none;margin:0;width:100%;max-width:100%;background:var(--paper);padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:block}
 .reader-bottom .demo-note{margin:0;text-align:center}
 .reader .prose{font-size:var(--read);line-height:1.95}
+/* 约束实际内容盒与内在最小宽度，标题、版本和编辑器均须在手机内换行。 */
+html,body{min-width:0;width:100%;max-width:100%}
+.app{width:100%;min-width:0}
+main,.page,.book-detail,.heading-row,.reader article,.reader-bar,.reader-meta,.prose,.reader-actions,.edit-tools{min-width:0;max-width:100%}
+h1,h2,h3,.reader-meta,#task-summary,.tool-status,.question-option span,.sheet-body,.connection span{overflow-wrap:anywhere}
+.reader-bar{gap:8px}
+.reader-bar>span{min-width:0;flex:1}
+.reader-tools{flex-shrink:0}
+dialog.reader{width:min(100%,430px);min-width:0;max-width:430px;border-radius:0;overflow-x:hidden}
+.reader article{width:100%;padding:24px 20px 32px}
+.reader .prose{width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal}
+.reader textarea{display:block;width:100%;min-width:0;max-width:100%;padding:8px 0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;overflow-x:hidden;font-size:16px;line-height:1.95;caret-color:var(--ink)}
+.reader-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+.reader-actions button{min-width:0;max-width:100%;padding:8px;line-height:1.5;overflow-wrap:anywhere}
+.reader-actions button:only-child{grid-column:1/-1}
+.reader-bottom .demo-note{overflow-wrap:anywhere;text-align:left;font-size:11px}
+.reader-bottom .demo-note:empty{display:none}
+.edit-tools,.file-create-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.edit-tools button,.file-create-actions button{min-width:0;flex:1 1 auto;font-size:12px;padding:8px}
+.copy-buffer{position:fixed;inset:0;width:1px!important;min-height:1px!important;height:1px;opacity:0;pointer-events:none}
+.reader ::selection{background:var(--ink);color:var(--inverse)}
+@media(min-width:800px){dialog.reader{border-radius:12px}.reader-bottom{margin-left:0}}
 #sheet{color:var(--ink)}
 .icon-btn{flex-shrink:0}
 @media(max-width:360px){main{padding-left:16px;padding-right:16px}.topbar{padding-left:16px;padding-right:12px}.brand{font-size:14px}.top-actions{gap:0}.book-hero{padding:20px 16px}}
