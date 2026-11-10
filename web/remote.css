@@ -1,0 +1,50 @@
+/* 保留原型的色彩、排版和手机宽度，仅补足真实状态与原生 dialog。 */
+[hidden]{display:none!important}
+.book-detail:not([hidden]){display:block}
+button{min-height:44px}
+button.connection{width:100%;text-align:left;min-height:44px;font-size:12px}
+button.connection span{flex:1}
+.booktitle,.row-copy,.message-text,.prose,#device-label,#model-label{overflow-wrap:anywhere}
+.book-hero .booktitle{letter-spacing:1px}
+.book-hero .hero-bottom{gap:12px;flex-wrap:wrap}
+.project-picker{display:flex;align-items:center;gap:12px;color:var(--muted);margin:20px 0 12px;font-size:12px}
+.project-picker select{flex:1;min-width:0;max-width:100%}
+select{color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:5px;min-height:44px;padding:8px;font-size:14px}
+.pair-form{display:grid;gap:12px;margin:22px 0 14px}
+.pair-form label{font-size:13px;font-weight:600}
+.pair-form textarea{width:100%;resize:vertical;min-height:112px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);padding:12px;font-size:16px;line-height:1.6}
+.pair-form .primary{width:100%;justify-content:center;gap:8px}
+#disconnect{margin:10px 0 14px;width:100%}
+.error-text{color:var(--ink);font-size:12px;line-height:1.8;white-space:pre-wrap;margin:12px 0;overflow-wrap:anywhere}
+.error-text:empty{display:none}
+#task-summary{font-size:12px;color:var(--muted);margin:18px 0}
+#messages{padding-top:16px}
+.message-text,.prose{white-space:pre-wrap}
+.message p{margin:0}
+.composer{position:static}
+.compose-box textarea{font-size:16px;max-height:240px}
+.compose-tools{gap:8px;flex-wrap:wrap}
+.compose-tools select{max-width:calc(100% - 56px);font-size:13px}
+.send-btn{min-width:44px;min-height:44px}
+.task-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0}
+.task-actions button{font-size:12px}
+.question-block fieldset{border:0;padding:0;margin:0 0 18px;min-width:0}
+.question-block legend{font-size:14px;font-weight:600;line-height:1.7;margin-bottom:10px}
+.question-option{display:flex;align-items:flex-start;gap:10px;padding:12px 10px;border:1px solid var(--line);border-radius:5px;margin:8px 0;min-height:48px;cursor:pointer;line-height:1.7}
+.question-option input{width:20px;height:20px;flex-shrink:0;margin-top:2px;accent-color:var(--ink)}
+.question-option small{display:block}
+.question-block .primary{width:100%;justify-content:center}
+dialog.reader{position:fixed;inset:0;left:50%;transform:translateX(-50%);margin:0;width:100%;max-width:430px;height:100dvh;max-height:100dvh;border:0;padding:0;color:var(--ink);background:var(--bg);overflow-y:auto;z-index:30}
+dialog.reader:not([open]){display:none}
+dialog.reader[open]{display:block}
+dialog.reader::backdrop{background:rgba(0,0,0,.32)}
+.reader article{padding-bottom:120px}
+.reader-bar{position:sticky;top:0;background:var(--bg);z-index:1}
+.reader-bar>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.reader-bottom{position:sticky;bottom:0;background:var(--paper);padding:16px 22px calc(16px + env(safe-area-inset-bottom));display:block}
+.reader-bottom .demo-note{margin:0;text-align:center}
+.reader .prose{font-size:var(--read);line-height:1.95}
+#sheet{color:var(--ink)}
+.icon-btn{flex-shrink:0}
+@media(max-width:360px){main{padding-left:16px;padding-right:16px}.topbar{padding-left:16px;padding-right:12px}.brand{font-size:14px}.top-actions{gap:0}.book-hero{padding:20px 16px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}

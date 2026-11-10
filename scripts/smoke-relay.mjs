@@ -1,0 +1,7 @@
+import {randomSecret,createCodec} from '../lib/secure-channel.mjs';
+import {relayClient,subscribe,publish} from '../lib/relay.mjs';
+import {HostProtocol} from '../bridge/host-protocol.mjs';
+import {CompanionClient} from '../lib/client.mjs';
+const secret=randomSecret();const codec=await createCodec(secret);const topic='dc-mobile/v1/'+codec.topicId;const host=new HostProtocol({secret,dispatch:async method=>method==='hello'?{device:'relay-test',version:'test'}:{count:3}});
+const transport=relayClient('testhost');let ready;const connected=new Promise(r=>ready=r);transport.on('connect',async()=>{await subscribe(transport,topic+'/request');ready();});transport.on('message',async(t,p,packet)=>{if(packet.retain||t!==topic+'/request')return;const reply=await host.receive(p.toString());if(reply)await publish(transport,topic+'/response',reply);});
+const timeout=setTimeout(()=>{console.error('FAIL relay timeout');process.exit(1)},45000);await connected;const phone=new CompanionClient(secret);try{const hello=await phone.connect();if(hello.device!=='relay-test')throw Error('HELLO_FAILED');const data=await phone.request('projects.list');if(data.count!==3)throw Error('RPC_FAILED');console.log('PASS: independent public WSS clients completed encrypted handshake and RPC');phone.close();transport.end(true);clearTimeout(timeout);}catch(error){console.error('FAIL',error.message);process.exitCode=1;phone.close();transport.end(true);clearTimeout(timeout);}

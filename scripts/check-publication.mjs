@@ -1,0 +1,7 @@
+import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import {execFileSync} from 'node:child_process';
+const sensitive=[];const privateFile=path.join(os.homedir(),'.deepcompose-mobile','connection.json');try{sensitive.push(JSON.parse(await fs.readFile(privateFile,'utf8')).secret);}catch{}
+function collect(value){if(!value||typeof value!=='object')return;for(const [k,v]of Object.entries(value)){if(typeof v==='string'&&/(api.?key|access.?token|secret)/i.test(k)&&v.length>=6)sensitive.push(v);else if(v&&typeof v==='object')collect(v);else if(typeof v==='string'&&/provider/i.test(k)){try{collect(JSON.parse(v));}catch{}}}}
+try{collect(JSON.parse(await fs.readFile(path.join(os.homedir(),'Library/Application Support/com.writerd/writerD/shared_preferences.json'),'utf8')));}catch{}
+const files=execFileSync('/usr/bin/git',['diff','--cached','--name-only','--diff-filter=ACMR','-z']).toString().split(String.fromCharCode(0)).filter(Boolean);
+for(const file of files){const data=execFileSync('/usr/bin/git',['show',':'+file],{maxBuffer:8*1024*1024});if(sensitive.some(secret=>secret&&data.includes(Buffer.from(secret))))throw Error('PRIVATE_CREDENTIAL_DETECTED_IN_STAGED_FILE');if(file.startsWith('.bridge/')||file.includes('connection.json')||file.includes('pairing-url.txt'))throw Error('PRIVATE_FILE_STAGED');}
+console.log('PASS publication scan: '+files.length+' staged files, no local pairing credential or known provider keys.');

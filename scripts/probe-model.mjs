@@ -1,0 +1,7 @@
+import fs from 'node:fs/promises';import os from 'node:os';import path from 'node:path';import {createEngine} from '../.bridge/engine.mjs';
+const home=os.homedir();const base=path.join(home,'.deepcompose-mobile','probe');const book=path.join(base,'empty-project');await fs.mkdir(path.join(book,'小说资料'),{recursive:true,mode:0o700});await fs.mkdir(path.join(book,'章节内容'),{recursive:true,mode:0o700});
+const engine=await createEngine({prefsPath:path.join(home,'Library','Application Support','com.writerd','writerD','shared_preferences.json'),booksRoot:base,skillsDir:path.join(home,'Documents','skills'),runtimeDir:path.join(base,'runtime'),allowedProjects:[book]});
+console.log('Model configured:',engine.info().configured);
+const {taskId}=await engine.start({requestId:'connection-probe-'+crypto.randomUUID(),projectId:'empty-probe',root:book,text:'连接测试。不要调用工具，不要读取或写入文件。请仅回复：连接成功。',mode:'readonly'});
+let result;const deadline=Date.now()+120000;while(Date.now()<deadline){const task=await engine.get(taskId);if(['completed','failed','stopped'].includes(task.state)){result=task;break;}await new Promise(resolve=>setTimeout(resolve,500));}
+if(result?.state!=='completed'){console.error('Model probe failed:',result?.state??'timeout');await engine.stop(taskId);process.exitCode=1;}else{console.log('Real provider connection PASS; assistant reply received:',result.text.includes('连接成功'));console.log('No real project or novel was included in this probe.');}
